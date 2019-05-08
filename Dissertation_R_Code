@@ -1,0 +1,1331 @@
+# "COMBINING DISTRIBUTED STATISTICAL INFERENCES UNDER PRIVACY CONSTRAINTS"
+# SUPPORTING R CODE
+# Author: Rahul Mathur
+# Department of Statistics, Universtity of Warwick, Coventry CV47ES, United Kingdom.
+
+
+# R code may also be found at: https://github.com/RjMathur/Crypto_in_Stats
+
+#================================================================================================================
+# UNIT 1: CODE TO PERFORM SECURE AGGREGATION OF REAL NUMBERS IN 'R'
+
+# I. PACKAGES REQUIRED
+# Packages 'primes' ,'polynom' ,'numbers' ,'SDraw' are 
+# required for performing secure multi-party aggregation in R.
+library(primes)
+library(polynom)
+library(numbers)
+library(SDraw)
+# library(VeryLargeIntegers)
+
+# II. PRELIMINARY CUSTOM FUNCTIONS
+
+# i. Function to return the no. of decimal places in input:
+# Input: a real number 'x'
+num.decimals <- function(x) 
+{
+  stopifnot(class(x)=="numeric")
+  y <- x %% 1
+  y <- sub("0+$","",y)
+  y <- sub("^.+[.]","",y)
+  nchar(y)
+}
+# i.a Testing the above function.
+# The reader is encouraged to test the sample code below.
+num.decimals(54545455435.333336776767879)
+# Output = 15
+
+num.decimals(54545455435.333336776767879787878788787856446)
+# Output = 15
+
+# Thus, 'R' stores real numbers upto finite precision.
+# The finite precision is 15 decimal places, observe that:
+2.3333333333333333 == 2.33333333333333365
+
+# ii. Function to compute the modulo inverse of a number:
+# Inputs: a is a real number, b > 0 is a natural number.
+mod_inv_calc <- function(a,b)
+{
+  if(a == b)
+  {return("No modular inverse exists")}
+  x <- unname(unlist(extended.gcd(a, b)[2]))
+  while (x < 0)
+  {
+    x <- x + b
+  }
+  # Return value x is percisely a ^ (-1) (mod b)
+  return(x)
+}
+
+# ii.a Testing the above function.
+mod_inv_calc(2,2)
+# Output = "No modular inverse exists"
+
+mod_inv_calc(7,3)
+# Output = 1
+
+# iii. Function to perform lagrange interpolation modulo p
+# Inputs: (x,y) are points from the polynomial
+# p denotes the prime number used for encryption
+# Output:  mod p polynomial. 
+Lagrange_Interpolation_Modulo <- function(x,y,p)
+{
+  numerator <- as.polynomial(c(1))
+  denominator <- 1
+  result_poly <- as.polynomial(c(0))
+  coeffs <- c()
+  
+  
+  for (i in 1:length(x))
+  {
+    # Refreshing values of numerator, denominator and coefficents
+    # for each iteration of loop
+    numerator <- as.polynomial(c(1))
+    denominator <- 1
+    # Iteration over all (other) values
+    for (j in 1:length(x)) 
+    {
+      if (i != j)
+      {
+        numerator = numerator * as.polynomial(c(-1*x[j],1))
+        denominator = denominator * (i - j)
+      }
+    }
+    # Calculating the polynomial modulo p
+    coeffs <- coefficients(numerator)
+    coeffs <- as.numeric(coeffs) * 
+      as.numeric(mod_inv_calc(denominator, p))
+    coeffs <- (coeffs * y[i])
+    coeffs<- (coeffs %% p)
+    
+    result_poly <- result_poly + as.polynomial(coeffs)
+  }
+  coeffs <- coefficients(result_poly)
+  coeffs <- (coeffs %% p)
+  result_poly <- as.polynomial(coeffs)
+  return(result_poly)
+}
+
+# iii.a Testing the above function.
+Lagrange_Interpolation_Modulo(c(1,2,3),c(7,4,2),13)
+# Output = 11 + 2*x + 7*x^2
+
+# iv.Function to create component secrets:
+# Input: k is an real number between 0 and 1.
+# k is only read up to 15 decimal places of accuracy.
+# Output: Serves as input for 'secret_creator' function.
+decimal_secret_creator <- function(k)
+{
+  if(k < 0 || k >= 1)
+    return("error")
+  
+  k_string <- toString(k)
+  s_1 <- 0
+  s_2 <- 0
+  s_3 <- 0
+  k_1 <- 0
+  k_2 <- 0
+  k_3 <- 0
+  
+  ind_exp <- grepl("e",k_string, fixed = TRUE)
+  
+  if(ind_exp == FALSE)
+  {
+    if(substr(k_string,3,7) != "")
+    { 
+      s_1 <- as.integer(substr(k_string,3,7))
+      k_1 <- nchar(substr(k_string,3,7))
+    }
+    
+    
+    if(substr(k_string,8,12) != "")
+    {
+      s_2 <- as.integer(substr(k_string,8,12))
+      k_2 <- nchar(substr(k_string,8,12))
+    }
+    
+    if(substr(k_string,13,17) != "")
+    {
+      s_3 <- as.integer(substr(k_string,13,17))
+      k_3 <- nchar(substr(k_string,13,17))
+    }
+  }
+  
+  if (ind_exp == TRUE) 
+  {
+    pos <- which(strsplit(k_string, "")[[1]]=="e")
+    num_zeros <- as.integer(substr(k_string,pos + 2,pos + 3)) - 1
+    
+    if(num_zeros < 5)
+    {
+      if(substr(k_string,1,5 - num_zeros) != "")
+      { 
+        s_1 <- as.integer(substr(k_string,1,5 - num_zeros))
+        k_1 <- nchar(substr(k_string,1,5 - num_zeros)) + num_zeros
+      }
+      
+      if(substr(k_string,6 - num_zeros,10 - num_zeros) != "")
+      {
+        s_2 <- as.integer(substr(k_string,6 - num_zeros,10 - num_zeros))
+        k_2 <- nchar(substr(k_string,6 - num_zeros,10 - num_zeros))
+      }
+      
+      if(substr(k_string,11 - num_zeros,15 - num_zeros) != "")
+      {
+        s_3 <- as.integer(substr(k_string,11 - num_zeros,15 - num_zeros))
+        k_3 <- nchar(substr(k_string,11 - num_zeros,15 - num_zeros))
+      }
+      
+    }
+    
+    if(num_zeros >= 5 && num_zeros < 10)
+    {
+      
+      s_1 <- 0
+      k_1 <- 5
+      
+      num_zeros <- num_zeros - 5
+      
+      if( num_zeros == 0)
+      {
+        if(paste(substr(k_string,1 ,1),substr(k_string,3,6),sep = "") != "")
+        {
+          s_2 <- as.integer(paste(substr(k_string,1 ,1),substr(k_string,3,6),sep = ""))
+          k_2 <- nchar(substr(k_string,1 ,1)) + nchar(substr(k_string,3,6))
+        }
+        
+        if(substr(k_string,7 ,11 ) != "")
+        {
+          s_3 <- as.integer(substr(k_string,7,11))
+          k_3 <- nchar(substr(k_string,7,11))
+        }
+      }
+      
+      if( num_zeros >= 1)
+      {
+        # num_zeros <- num_zeros - 1
+        if(paste(substr(k_string,1 ,1),substr(k_string,3,6 - num_zeros),sep = "") != "")
+        {
+          s_2 <- as.integer(paste(substr(k_string,1 ,1),substr(k_string,3,6 - num_zeros),sep = ""))
+          k_2 <- nchar(substr(k_string,1 ,1)) + nchar(substr(k_string,3,6 - num_zeros)) + num_zeros
+        }
+        
+        if(substr(k_string,7 ,11 ) != "")
+        {
+          s_3 <- as.integer(substr(k_string,7 - num_zeros,11 - num_zeros))
+          k_3 <- nchar(substr(k_string,7 - num_zeros,11 - num_zeros))
+        }
+        
+      }
+      
+    }
+    
+    if(num_zeros >= 10 && num_zeros < 15)
+    {
+      
+      s_1 <- 0
+      k_1 <- 5
+      s_2 <- 0
+      k_2 <- 5
+      
+      num_zeros <- num_zeros - 10
+      
+      if(paste(substr(k_string,1,1), substr(k_string,3,6), sep = "") != "")
+      {
+        s_3 <- as.integer(paste(substr(k_string,1,1), substr(k_string,3,6), sep = ""))
+        k_3 <- nchar(substr(k_string,1,1)) + nchar(substr(k_string,3,6))
+      }
+      
+      
+    }
+    
+    if(num_zeros >= 15)
+    {
+      s_1 <- 0
+      k_1 <- 5
+      s_2 <- 0
+      k_2 <- 5
+      s_3 <- 0
+      k_3 <- 5
+    }
+    
+    
+  }
+  
+  S <- c(s_1,s_2,s_3)
+  K <- c(k_1,k_2,k_3)
+  
+  return(list("S" = S, "K" = K))
+}
+
+# iv.a Testing the above function.
+# Note: Function handles 15 decimal place precision inputs
+decimal_secret_creator(.333336776767879)
+
+# Note: Function accepts fractional representations.
+decimal_secret_creator(2/3)
+
+# Note: Function accepts "fractional"exp" inputs as well.
+decimal_secret_creator(exp(-21))
+
+# v.Function to create component secrets:
+# Input: k is a positive real number.
+# k is only read up to 15 decimal places of accuracy.
+# Output: Serves as input for 'secure_aggregation' function.
+secret_creator<- function(k)
+{
+  # Error handling for integer tolerance in R.
+  if(abs(k) > 2147483647)
+  {
+    return("Integer error - not supported by code.")
+  }
+  
+  # Integer part of k.
+  k_integer <- floor(k)
+  k_int_string <- toString(k_integer)
+  n_int <- nchar(k_integer)
+  
+  # Decimal places of k.
+  if(k %% 1 == 0)
+  {
+    k_sub <- 0
+  }
+  if(k %% 1 != 0)
+  {
+    temp_string <- toString(k)
+    
+    ind_exp <- grepl("e",temp_string, fixed = TRUE)
+    
+    if(ind_exp == FALSE)
+    {
+      temp_sub_string <- substring(temp_string, n_int + 2)
+      temp_n <- nchar(temp_sub_string)
+      k_sub <- as.double(temp_sub_string) * 10 ^(-temp_n)
+      # print(k_sub)
+    }
+    
+    if(ind_exp == TRUE)
+    {
+      # temp_sub_string <- substring(temp_string, n_int)
+      # print(temp_sub_string)
+      # temp_n <- nchar(temp_sub_string)
+      #print(temp_n)
+      k_sub <- abs(k)
+      # print(k_sub)
+    }
+  }
+  
+  # Decimal part of k.  
+  S_1 <- decimal_secret_creator(k_sub)$S
+  K_1 <- decimal_secret_creator(k_sub)$K
+  
+  # Integer part of k.
+  s_int_1 <- 0
+  s_int_2 <- 0
+  k_int_1 <- 0
+  k_int_2 <- 0
+  
+  if(n_int > 5)
+  {
+    if(substr(k_int_string, n_int -5 + 1,n_int) != "")
+    {
+      s_int_1 <- as.integer(substr(k_int_string, n_int -5 + 1,n_int))
+      k_int_1 <- nchar(substr(k_int_string, n_int -5 + 1,n_int))
+    }
+    
+    if(substr(k_int_string,1,n_int -5) != "")
+    {
+      s_int_2 <- as.integer(substr(k_int_string,1,n_int -5))
+      k_int_2 <- nchar(substr(k_int_string,1,n_int -5))
+    }
+  }
+  
+  if(n_int <= 5)
+  {
+    if(substr(k_int_string,1,5) != "")
+    {
+      s_int_1 <- as.integer(substr(k_int_string, 1,5))
+      k_int_1 <- nchar(substr(k_int_string, 1,5))
+    }
+    
+    if(substr(k_int_string,6,10) != "")
+    {
+      s_int_2 <- as.integer(substr(k_int_string,6,10))
+      k_int_2 <- nchar(substr(k_int_string, 6,10))
+    }
+    
+  }
+  
+  S <- c(s_int_1, s_int_2,S_1)
+  K <- c(k_int_1, k_int_2,K_1)
+  
+  # S is the vector of secret components.
+  # K is a vector denoting # of elements in each component.
+  return(list("S" = S, "K" = K))
+  
+}  
+
+# vi. Function to perform Homomorphic secret sharing:
+# Inputs: n denotes the total number of parties.
+# D denotes a vector of secrets to share - one for each party.
+# Note: k = n and party i chooses i for polynomial evaluation.
+HSS <- function(k, n, D)
+{
+  # Assumed that k is always equal to n.
+  if (k != n) 
+  {
+    return("We assume that k = n; please try again!")
+  }
+  
+  # UPDATING SECRETS.
+  
+  # 'm_vals' stores the no. of decimal places in each secret.
+  m_vals <- num.decimals(D)
+  m <- max(m_vals)
+  # print(m)
+  
+  # 'S' denotes the vector of updated secrets.
+  # print(D * 10^(m))
+  S <- as.integer(D * 10^(m))
+  # print(S)
+  
+  
+  # PART I: CHOICE OF PRIME FOR ENCRYPTION OF SECRET SHARES
+  p_vals <- rep(0,length = n)
+  
+  # For each party, we pick a prime p that is compatible
+  for (i in 1:length(p_vals)) 
+  {
+    Max <- sample(10:100,1)
+    p_vals[i] <- nextPrime(max(S[i],n))
+  }
+  
+  Max <- sample(10:100,1)
+  p <- nextPrime(sum(p_vals) + Max)
+  
+  # Choice of p is valid since, S < p for every secret S.
+  # And, from earlier conditions, p > n as required.
+  
+  # PART II: CONSTRUCTION OF SECRET POLYNOMIALS AND SECRET SHARES
+  
+  # 'poly_coeff' is a matrix that stores the polynomial coefficents
+  # [i,j]th entry = coefficent of x^j for ith party.
+  
+  poly_coeff <- matrix(0, nrow = n, ncol = n)
+  for (i in 1:n) 
+  {
+    poly_coeff[i,] <- c(S[i], ceiling(runif((n-1),0,(p-1))))
+    #poly_coeff[i,] <- c(S[i], sample(1:(p-1),(n-1),replace = TRUE))
+  }
+  
+  # 'secret_shares' stores the secret shares released
+  # [i,j]th entry = secret share released by party i to party j
+  # Note: secret share values are released modulo p
+  
+  # Party j receives the value of others polynomials at j
+  
+  secret_shares <- matrix(0, nrow = n, ncol = n)
+  for (i in 1:n) 
+  {
+    generated_poly <- as.function(polynomial(poly_coeff[i,]))
+    secret_shares[i,] <- (generated_poly(1:n)) %% p
+  }
+  
+  # PART III: CONSTRUCTION OF POLYNOMIAL
+  
+  # 'y_vals' is stores the sum of secret shares revealed
+  # ith entry is the sum of polynomials evaluated at i modulo p
+  y_vals <- numeric(length = n)
+  
+  for (i in 1:n) 
+  {
+    y_vals[i] <- sum(secret_shares[,i]) %% p 
+  }
+  
+  # Storing the x-components of aggregated secret shares
+  x_vals <- 1:n
+  
+  
+  # Using the Lagrange Interpolation method to recover polynomial
+  req_poly <- 
+    Lagrange_Interpolation_Modulo(as.numeric(x_vals),as.numeric(y_vals),p)
+  poly_dec <- as.function(req_poly)
+  
+  return(poly_dec(0) * (10 ^ (-m)))
+  
+}
+
+# III. CUSTOM FUNCTION TO PERFORM SECURE MULTI-PARTY AGGREGATION.
+# Inputs: n denotes the total number of parties.
+# D denotes a vector of secrets to share - one for each party.
+# Elements of D can take any real value.
+# Assumed that k = n holds always.
+secure_aggregation <- function(k,n,D)
+{
+  # Handling of negative inputs.
+  l <- (D < 0)
+  fact <- 0
+  add_vec <- rep(0,n)
+  if( sum(l) > 0)
+  {
+    for (i in 1:n) 
+    {
+      add_vec[i] <- 
+        sample( (ceiling(abs(D[i])): 
+                   (ceiling(abs(D[i])) + sample(1:10,1)) ),1)
+    }
+    temp <- HSS(n,n,add_vec)
+    fact <- sample( (temp: (temp + sample(1:10,1))),1)
+  }
+  
+  # Updating secrets to handle negative values.
+  D <- D + fact
+  # print(D)
+  
+  # 'recover_val' denotes the sum of secrets.
+  recover_val <- 0
+  
+  # Assumption.
+  if (k != n) 
+  {
+    return("We assume that k = n; please try again!")
+  }
+  
+  # 'D_comp' is the matrix of secret components.
+  D_comp <- matrix(0, nrow = n, ncol = 5)
+  
+  # 'm_vals' is the matrix of decimal places.
+  m_vals <- matrix(0, nrow = n, ncol = 5)
+  
+  # 'D_vals' is the matrix of updated secret components.
+  D_vals <- matrix(0, nrow = n, ncol = 5)
+  
+  # Splitting decimal part of secret into 3 components.
+  # Each component consists of 5 decimal places each.
+  # Recall, precision in R is 15 decimal places.
+  # Splitting integer part of secret into 2 components.
+  for (i in 1:n) 
+  {
+    
+    D_comp[i,] <- secret_creator(D[i])$S
+    # print(D_comp[i,])
+    m_vals[i,] <- secret_creator(D[i])$K
+    # D_vals stores inputs for the HSS function.
+    D_vals[i,] <- D_comp[i,] * 10 ^ (-m_vals[i,])
+    D_vals[i,1] <-  D_comp[i,1] 
+    D_vals[i,2] <-  D_comp[i,2] 
+    
+  }
+  
+  # print(D_vals)
+  # print(m_vals)
+  
+  # Using HSS function to perform secure aggregation.
+  s_1 <- HSS(k,n,D_vals[,1])
+  s_2 <- HSS(k,n,D_vals[,2])
+  s_3 <- HSS(k,n,D_vals[,3])
+  s_4 <- HSS(k,n,D_vals[,4])
+  s_5 <- HSS(k,n,D_vals[,5])
+  
+  # Recovery of the sum of secrets by each party.
+  recover_val <- recover_val + (s_4 * 10 ^(-max(m_vals[,3])))
+  # print(recover_val)
+  recover_val <- recover_val + 
+    (s_5 * 10 ^(-(max(m_vals[,3]) + max(m_vals[,4]))))
+  # print(recover_val)   
+  recover_val <- recover_val + s_3 + s_1 + (s_2* 10 ^(max(m_vals[,1])))
+  return((recover_val - 3 * fact))
+}
+
+# Testing the above function.
+# Example 1: Case of fractional inputs adding to an integer value.
+sum_1 <- secure_aggregation(3,3,c(1/3,1/3,1/3))
+sum_2 <- 1
+all.equal(sum_1, sum_2)
+# Output = TRUE
+
+# Example 2: Case of small inputs.
+t_1 <- secure_aggregation(3,3,c(exp(-1),exp(-2),exp(-8)))
+t_2 <- sum(c(exp(-1),exp(-2),exp(-8)))
+
+all.equal(t_1,t_2)
+
+# Example 3: Case of large inputs. 
+t_1 <- secure_aggregation(3,3,c(exp(19),exp(8),exp(21)))
+t_2 <- sum(c(exp(19),exp(8),exp(21)))
+
+all.equal(t_1,t_2)
+
+# Example 4: Case of mixed inputs (fractions, large and small values)
+t_1 <- secure_aggregation(3,3,c(exp(1),2/3,-exp(-20)))
+t_2 <- sum(c(exp(1),2/3,-exp(-20)))
+all.equal(t_1,t_2)
+
+#================================================================================================================
+
+#================================================================================================================
+
+# UNIT II: APPLICATIONS TO SPECIFIC MODELS - NORMAL AND BETA
+
+# I. CUSTOM FUNCTION FOR NORMAL MODEL:
+# Inputs: 'm' denotes the number of parties
+# 'D' is the matrix of secrets of each party
+# (i,1) th entry = no. of observations of party i.
+# (i,2) th entry = sum of observations of party i.
+# (i,3) th entry = sum of squared observations of party i.
+Norm_Encrypt_MLE <- function(m,D)
+{
+  
+  # Each party must share 3 secrets.
+  if(dim(D)[2] != 3)
+  {return("Incorrect number of secrets to share per party.")}
+  
+  # User must provide secrets for all 3 parties.
+  if(dim(D)[1] != m)
+  {return("Error in entering secrets; please try again!")}
+  
+  # Step 1: Secure mutli-party aggregation of secrets.
+  # Recovering total number of observations.
+  N <- secure_aggregation(m,m,D[,1])
+  
+  # Recovering sum of observations.
+  sum_y <- secure_aggregation(m,m,D[,2])
+  
+  # Recovering sum of squared observations.
+  sum_y2 <- secure_aggregation(m,m,D[,3])
+  
+  # Step 2: Computing MLE for parameters.
+  # Setting default starting values for parameters 
+  mu_mle <- (sum_y / N)
+  sigma_mle <- (sum_y2 - N * mu_mle ^2)/N
+  return(list("mu" = mu_mle, "sigma2" = sigma_mle))
+  
+}
+
+# I.a. Example
+set.seed(35)
+x_1 <- rnorm(25,180,10)
+set.seed(1)
+x_2 <- rnorm(20,180,10)
+set.seed(7)
+x_3 <- rnorm(5,180,10)
+
+# M provides matrix format entry for custom function.
+M <- matrix(0,3,3)
+
+
+M[1,1] <- 25
+M[1,2] <- sum(x_1)
+M[1,3] <- sum((x_1)^2)
+
+M[2,1] <- 20
+M[2,2] <- sum(x_2)
+M[2,3] <- sum((x_2)^2)
+
+M[3,1] <- 5
+M[3,2] <- sum(x_3)
+M[3,3] <- sum((x_3)^2)
+
+# Computing MLEs using secure multi-party aggregation.
+T <- Norm_Encrypt_MLE(3,M)
+
+# MLE's computed using aggregate data.
+mu_mle <- sum(M[,2])/50
+sigma_mle <- (sum(M[,3]) - 50 * mu_mle ^2)/50
+
+# Custom function returns correct output.
+all.equal(mu_mle, T$mu)
+# Output: TRUE
+
+all.equal(sigma_mle,T$sigma2)
+# Output: TRUE
+
+# I.b. (Random) example
+
+x_1 <- rnorm(15,0,7)
+x_2 <- rnorm(15,0,7)
+x_3 <- rnorm(15,0,7)
+
+# M_2 provides matrix format entry for custom function.
+M_2 <- matrix(0,3,3)
+
+# Pre-prepared format for (random) inputs
+M_2[1,1] <- 15
+M_2[1,2] <- sum(x_1)
+M_2[1,3] <- sum((x_1)^2)
+
+M_2[2,1] <- 15
+M_2[2,2] <- sum(x_2)
+M_2[2,3] <- sum((x_2)^2)
+
+M_2[3,1] <- 15
+M_2[3,2] <- sum(x_3)
+M_2[3,3] <- sum((x_3)^2)
+
+# Computing MLEs using secure multi-party aggregation.
+T <- Norm_Encrypt_MLE(3,M_2)
+
+# MLE's computed using aggregate data.
+mu_mle <- sum(M_2[,2])/45
+sigma_mle <- (sum(M_2[,3]) - 45 * mu_mle ^2)/45
+
+# Custom function returns correct output.
+all.equal(mu_mle, T$mu)
+# Output: TRUE
+
+all.equal(sigma_mle,T$sigma2)
+# Output: TRUE
+
+# II. CUSTOM FUNCTION FOR BETA MODEL:
+
+# Packing 'Rfast' is required for beta MLEs.
+library(Rfast)
+
+# i. Score function for Beta distribution
+# Inputs: a and b are the scale parameters.
+# x_1 = no. of observations
+# x_2 = sum of log observations
+# x_3 = sum of log (1 - observations)
+# Output: score function.
+beta_score <- function(x_1,x_2,x_3,a,b)
+{
+  sum_1 <- rep(0,0)
+  sum_1[1] <- x_2 - (x_1 * (digamma(a) - digamma(a+b)))
+  
+  sum_1[2] <- x_3 - (x_1 * (digamma(b) - digamma(a+b)))
+  
+  return(sum_1)
+}
+
+
+
+# ii. Observed information matrix for Beta distribution
+# Inputs: a and b are the scale parameters.
+# x_1 = no. of observations made.
+# Output: Observed information matrix.
+Beta_observed_info <- function(x_1,a,b)
+{
+  sum_1 <- matrix(0,nrow = 2,ncol = 2)
+  sum_1[1,1] <- -1 * (x_1 * (trigamma(a + b) - trigamma(a)))
+  
+  sum_1[2,2] <- -1 * (x_1 * (trigamma(a + b) - trigamma(b)))
+  
+  sum_1[1,2] <- -1 * x_1 * trigamma(a + b)
+  sum_1[2,1] <- -1 * x_1 * trigamma(a + b)
+  
+  return(sum_1)
+}
+
+
+# iii. Function to perform IRLS algorithm for Beta distribution.
+# Inputs: a and b are initial values for iteration.
+# x_1 = no. of observations
+# x_2 = sum of log observations
+# x_3 = sum of log (1 - observations)
+# mat_iter specifies max no. of iterations.
+Beta_IRLS_Algorithm <- function(x_1,x_2,x_3,a,b,mat_iter=1000)
+{
+  beta <- c(a,b)
+  for (i in 1:max_iter) 
+  {
+    beta_new <- beta + (solve(Beta_observed_info(x_1,beta[1],beta[2]))
+                        %*% beta_score(x_1,x_2,x_3,beta[1],beta[2]))
+    
+    if (abs((beta_new[1] - beta[1])) <= 0.00000000001 && 
+        abs((beta_new[2] - beta[2])) <= 0.00000000001)
+    {
+      return(beta_new)
+    }
+    beta <- beta_new
+  }
+  return(beta_new)
+}
+
+# Sample of beta values
+set.seed(7)
+temp_vals <- rbeta(60,5,6)
+
+# MLE for beta distribution using Newton Raphson Method
+inbuilt_vals <- beta.mle(temp_vals)$param
+
+num_temp_vals <- 60
+temp_vals_sum <- sum(log(temp_vals))
+temp_vals_sum_2 <- sum(log((1 - temp_vals)))
+
+
+# Using custom code for MLE estimation using IRLS algorithm.
+my_beta_vals <- Beta_IRLS_Algorithm(num_temp_vals,
+                                    temp_vals_sum,temp_vals_sum_2,1,1)
+
+abs(sum(my_beta_vals - inbuilt_vals ))
+# Output very close to 0.
+
+# iv. SECURE PARAMETER ESTIMATION FUNCTION.
+# Inputs: 'm' denotes the number of parties
+# 'D' is the matrix of secrets of each party
+# (i,1) th entry = number of observations of party i.
+# (i,2) th entry = sum of log observations of party i.
+# (i,3) th entry = sum of log 1 minus observations of party i.
+
+Secure_Beta_IRLS <- function(m,D)
+{
+  # Each party must share 3 secrets.
+  if(dim(D)[2] != 3)
+  {return("Incorrect number of secrets to share per party.")}
+  
+  # User must provide secrets for all 3 parties.
+  if(dim(D)[1] != m)
+  {return("Error in entering secrets; please try again!")}
+  
+  # Step 1: Secure mutli-party aggregation of secrets.
+  # Recovering sum of no. of observations.
+  Num_D <- secure_aggregation(m,m,D[,1])
+  #print(Num_D)
+  
+  # Recovering sum of log observations.
+  sum_D <- secure_aggregation(m,m,D[,2])
+  #print(sum_D)
+  
+  # Recovering sum of log (one minus observations).
+  sum_D_2 <- secure_aggregation(m,m,D[,3])
+  #print(sum_D_2)
+  
+  # Step 2: IRLS algorithm to compute MLE for parameters.
+  # Setting default starting values for parameters 
+  MLE <- Beta_IRLS_Algorithm(Num_D,sum_D,sum_D_2,1,1)
+  return(MLE)
+}
+
+# Splitting data into 3 parties.
+Beta_X_1 <- temp_vals[1:20]
+Beta_X_2 <- temp_vals[21:40]
+Beta_X_3 <- temp_vals[41:60]
+
+
+# Beta_X provides matrix format entry for custom function.
+Beta_X <- matrix(0, nrow = 3, ncol = 3)
+
+Beta_X[1,1] <- 20
+Beta_X[1,2] <- sum(log(Beta_X_1))
+Beta_X[1,3] <- sum(log(1 - Beta_X_1))
+
+Beta_X[2,1] <- 20
+Beta_X[2,2] <- sum(log(Beta_X_2))
+Beta_X[2,3] <- sum(log(1 - Beta_X_2))
+
+Beta_X[3,1] <- 20
+Beta_X[3,2] <- sum(log(Beta_X_3))
+Beta_X[3,3] <- sum(log(1 - Beta_X_3))
+
+# Performing secure IRLS for beta distribution.
+Beta_Output <- Secure_Beta_IRLS(3,Beta_X)
+
+# Comparing differences.
+abs(sum(Beta_Output - inbuilt_vals ))
+# Output close to 0.
+
+#================================================================================================================
+
+#================================================================================================================
+
+# UNIT III: GENERALIZED LINEAR MODEL PARAMETER ESTIMATION SET-UP
+
+# CODE TO PERFORM SECURE GLM PARAMETER ESTIMATION 'R'
+
+# I. PRELIMINARY CUSTOM FUNCTIONS [LOGISTIC REGRESSION]
+
+# i. Function to compute 'mu'.
+# Inputs: beta - vector of parameter estimates.
+# x - row of the data matrix.
+# Output: 'mu' i.e. E[Y]
+h_b_x<- function(beta,x)
+{
+  if(length(beta) != length(x))
+  {return("Incompatible length of vectors")}
+  return((exp(sum(beta*x)))/(1 + exp(sum(beta*x))))
+}
+
+# ii. Function to compute score function.
+# Inputs: beta - vector of parameter estimates.
+# X - data matrix.
+# y - vector of responses.
+# Output: Score function.
+score <- function(beta,X,y)
+{
+  # n denotes the number of observations in the data matrix X
+  p <- length(beta)
+  n <- length(y)
+  
+  # providing initial value for the score function
+  sum_1 <- rep(0,p)
+  
+  
+  for (i in 1:n) 
+  {
+    sum_1 <- sum_1 +  (y[i] - h_b_x(beta,X[i,])) * X[i,]
+  }
+  
+  # sum_1 is a vector of length p 
+  return(sum_1)
+}
+
+# iii. Function to compute Observed information matrix.
+# Inputs: beta - vector of parameter estimates.
+# X - data matrix.
+# y - vector of responses.
+# Output: Observed information matrix.
+Observed_matrix <- function(beta,X,y)
+{
+  # n denotes the number of observations in X.
+  n <- dim(X)[1]
+  
+  # p denotes the number of parameters chosen.
+  p <- dim(X)[2]
+  
+  # initial value for Observed information matrix.
+  sum_1 <- matrix(rep(0,p*p), nrow = p, ncol = p)
+  
+  for (i in 1:n) 
+  {
+    sum_1 <- sum_1 +  (((X[i,] %*% t(X[i,])) 
+                        * h_b_x(beta,X[i,]) * ( 1 - h_b_x(beta,X[i,]))))
+  }
+  
+  # sum_1 is a matrix of length p * p 
+  return(sum_1)
+}
+
+# iv. Function to perform IRLS algorithm.
+# Inputs: beta - vector of parameter estimates.
+# X - data matrix.
+# y - vector of responses.
+# mat_iter - limit on no. of iterations.
+# Output: MLE for parameters.
+algorithm <- function(X,y,max_iter,beta)
+{
+  for (i in 1:max_iter) 
+  {
+    beta_new <- beta + (solve(Observed_matrix(beta,X,y)) 
+                        %*% score(beta,X,y))
+    if(sum(abs(beta - beta_new)) < 0.0000001)
+    {
+      return(beta_new)
+    }
+    beta <- beta_new
+  }
+}
+
+
+# II. ILLUSTRATIVE EXAMPLE - TITANIC DATASET 
+# This section provides an example of secure parameter 
+# estimation by fitting a Logistic regression model to 
+# the data in the Titanic dataset.
+
+# i. EXPLORATORY DATA ANALYSIS 
+# Loading the titanic dataset.
+library(titanic)
+data("titanic_train")
+data("titanic_test")
+
+# Handling N/A values in dataset.
+library(dplyr)
+titanic_test$Survived <- 2
+complete_data <- rbind(titanic_train, titanic_test)
+complete_data$Embarked[complete_data$Embarked==""] <- "S"
+complete_data$Age[is.na(complete_data$Age)] <- 
+  median(complete_data$Age,na.rm=S)
+complete_data <- as.data.frame(complete_data)
+titanic_data <- 
+  select(complete_data,-c(Cabin, PassengerId, Ticket, Name))
+
+titanic_data <- titanic_data[!titanic_data$Survived == "2", ]
+
+
+# y_vals denotes the vector of (binary) responses.
+y_vals <- titanic_data$Survived
+
+# X denotes the augmented data matrix.
+x <- as.data.frame(titanic_data[,-1])
+X <- model.matrix(y_vals~.,data = x)
+
+
+# ii. PARAMETER ESTIMATION
+
+# Intial value for beta.
+beta <- as.numeric(rep(0.01, dim(X)[2]))
+
+# Performing Fishers scoring algorithm.
+# my_vals denotes MLE for model parameters.
+my_vals <- algorithm(X,y_vals,1000,beta)
+
+# Fitting Logistic regression model using in-built function.
+titanic_model <- glm(Survived ~.,family=binomial(link='logit'),
+                     data=titanic_data)
+
+
+# Computing sum of differences between MLEs.
+sum(abs(my_vals - coefficients(titanic_model)))
+# Output: 7.216606e-13
+
+# Note: This illustrates that custom Logisitic regression code
+# returns MLE values close to the output of glm.fit funtion.
+# This indicates that the code provides sensible estimates.
+
+
+# iii. SECURE PARAMETER ESTIMATION FUNCTION.
+# Inputs: X is a list of data matrices.
+# y_vals is a list of vectors of responses.
+# beta is a starting value for IRLS algorithm.
+
+Secure_Logistic_IRLS <- function(X,y_vals,max_iter,beta)
+{
+  # n denotes the total number of parties
+  n <- length(y_vals)
+  
+  # n_obs denotes the total no. of observations recorded.
+  # p denotes the number of model parameters.
+  n_obs <- 0
+  p <- dim(X[[1]])[2]
+  
+  for (k in 1:n) 
+  {
+    n_obs <- n_obs + dim(y_vals[[k]])[1]
+    # if(dim(X[[k]])[2] != p)
+    # {
+    #   return("Error: Inconsistency in number of parameters.")
+    # }
+  }
+  
+  for (k in 1:max_iter) 
+  {
+    # 'temp_1' and 'temp_2' are loop variables.
+    temp_1 <- rep(0, p)
+    temp_2 <- matrix(0, nrow = p, ncol = p)
+    
+    # 'Score_List' and 'OM_List' denote the secrets at step k.
+    Score_List <- list(rep(temp_1,n))
+    OM_List <- list(rep(temp_2,n))
+    
+    for (i in 1:n) 
+    {
+      Score_List[[i]] <- score(beta,X[[i]], y_vals[[i]])
+      OM_List[[i]] <- Observed_matrix(beta,X[[i]], y_vals[[i]])
+    }
+    
+    # Computing sum of secrets at step k.
+    Secure_Score <- rep(0,p)
+    Secure_OM <- matrix(0, nrow = p, ncol = p)
+    
+    for (k in 1:p) 
+    {
+      # 'temp_3' is a looping vector.
+      temp_3 <- rep(0,n)
+      for (j in 1:n) 
+      {
+        temp_3[j] <- unname((Score_List[[j]])[k])
+      }
+      # Secure aggregation of kth element of score function.
+      Secure_Score[k] <- secure_aggregation(n,n,temp_3)
+    }
+    
+    # Secure aggregation of Observed information matrix.
+    for (k in 1:p)
+    {
+      for (l in 1:k)
+      {
+        temp_4 <- rep(0,n)
+        for (m in 1:n)
+        {
+          temp_4[m] <- unname((OM_List[[m]])[k,l])
+        }
+        
+        Secure_OM[k,l] <- secure_aggregation(n,n,temp_4)
+        # Exploiting symmetry.
+        if (k != l)
+        {
+          Secure_OM[l,k] <- Secure_OM[k,l]
+        }
+        
+      }
+    }
+    
+    # IRLS algorithm step.
+    beta_new <- beta + (solve(Secure_OM) %*% Secure_Score)
+    if(abs(sum(beta_new - beta)) < 0.00001)
+    {
+      return(list("Score" = Secure_Score, 
+                  "OM" = Secure_OM, "MLE" = beta))
+    }
+    beta <- beta_new
+    #print(beta)
+    
+  }
+  
+  return(list("Score" = Secure_Score, "OM" = Secure_OM, 
+              "MLE" = beta))
+  
+  
+}
+
+# iv. CREATING 3 SHARES OF ORIGNAL DATA.
+
+# 3 parties have shares of the orignal data.
+X_1 <- X[1:297,]
+X_2 <- X[298:594,]
+X_3<- X[595:891,]
+
+y_1 <- y_vals[1:297]
+y_2 <- y_vals[298:594]
+y_3 <- y_vals[595:891]
+
+F_1 <- Observed_matrix(beta,X_1,y_1)
+F_2 <- Observed_matrix(beta,X_2,y_2)
+F_3 <- Observed_matrix(beta,X_3,y_3)
+
+F_4 <- score(beta,X_1,y_1)
+F_5 <- score(beta,X_2,y_2)
+F_6 <- score(beta,X_3,y_3)
+
+# Sum of each party's observed info and score function.
+Observed_Info_sum <- F_1 + F_2 + F_3
+Score_sum <- F_4 + F_5 + F_6
+
+# Fisher info and Score function of aggregate information.
+Observed_Info_full <- Observed_matrix(beta,X,y_vals)
+score_full <- score(beta,X,y_vals)
+
+# Indication of linearity of derivatives.
+# i.e. sum of individual scores is score of aggregate data.
+# same for Observed information.
+sum (Observed_Info_sum - Observed_Info_full)
+sum(Score_sum - score_full )
+
+# Creating a list of X and Y values for parties.
+X_list <- list(X_1,X_2,X_3)
+y_list <- list(y_1,y_2,y_3)
+
+
+# V. FINAL OUTPUT
+
+# Performing secure parameter estimation 
+# Cap of 100 Fishers scoring iterations.
+# 'my_output' = MLEs using secure parameter estimation. 
+my_output <- Secure_Logistic_IRLS(X_list,y_list,100,beta)
+
+# Difference is negligible.
+sum(abs(my_output$MLE - coefficients(titanic_model)))
+# Output: 4.458511e-05
+
+# Therefore, the code for secure parameter esimation does provide sensible results.
+
+#================================================================================================================
+
+#================================================================================================================
+
+# UNIT IV: APPLICATION OF FRAMEWORK TO CREDIT RISK MODELLING
+
+# Importing credit risk dataset for Logistic Regression
+# Source: https://rpubs.com/anup_jana/logistic
+
+# Required packages
+library(readxl)
+library(dplyr)
+
+Credit_Risk_Dataset <- read_excel("Credit Risk Dataset.xlsx", na = "")
+
+# Removing personally identifiable information (Loan ID number)
+Credit_Risk_Dataset <- Credit_Risk_Dataset[-1]
+
+# Handling NA and blank values.
+# Custom function provided by GitHub
+new_val<-function(x)
+{
+  ta = table(x)
+  tam = max(ta)
+  if(all(ta == tam))
+    mod = NA
+  else if(is.numeric(x))
+    mod = as.numeric(names(ta))[ta==tam]
+  else
+    mod = names(ta)[ta==tam]
+  return(mod)
+}
+
+# creating a copy of the orignal data set before modifications
+new_data <- Credit_Risk_Dataset 
+
+# For character variables use mode value of the attribute
+new_data$Gender[is.na(new_data$Gender)] <- new_val(new_data$Gender)
+new_data$Married[is.na(new_data$Married)] <- new_val(new_data$Married)
+new_data$Dependents[is.na(new_data$Dependents)] <- new_val(new_data$Dependents)
+new_data$Credit_History[is.na(new_data$Credit_History)] <- new_val(new_data$Credit_History)
+new_data$Self_Employed[is.na(new_data$Self_Employed)] <- new_val(new_data$Self_Employed)
+
+#  For numeric variables use mean value of the attribute
+new_data$LoanAmount[is.na(new_data$LoanAmount)] <- mean(new_data$LoanAmount, na.rm = TRUE)
+new_data$Loan_Amount_Term[is.na(new_data$Loan_Amount_Term)] <- mean(new_data$Loan_Amount_Term, na.rm = TRUE)
+
+# Handling categorical variables
+# 2 Unique values treatment
+
+new_data$Dummy_Gender <- ifelse(new_data$Gender=="Male",1,0)
+new_data$Dummy_Married <- ifelse(new_data$Married=="Yes",1,0)
+new_data$Dummy_Education <- ifelse(new_data$Education=="Graduate",1,0)
+new_data$Dummy_Self_employed <- ifelse(new_data$Self_Employed=="Yes",1,0)
+
+# More than 2 unique values treatment
+new_data$Dummy_Urban <- ifelse(new_data$Property_Area=="Urban",1,0)
+new_data$Dummy_Rural <- ifelse(new_data$Property_Area=="Rural",1,0)
+new_data$Dummy_Semiurban <- ifelse(new_data$Property_Area=="Semiurban",1,0)
+
+# Special cases
+new_data$Dummy_Dep <- as.numeric(substr(new_data$Dependents,1,1)) 
+new_data$Loan_Status <- ifelse(new_data$Loan_Status=="Y",1,0)
+
+# GLM model training data
+library(dplyr)
+train_data <- new_data
+train_data <- dplyr::select(new_data,- Gender,- Married,- Education,- Self_Employed,
+                            - Dependents,- Property_Area)
+
+# Fitting GLM using in-built R functions
+credit_risk_model <- glm(train_data$Loan_Status ~., family=binomial(link='logit'),data = train_data)
+
+# summary(credit_risk_model)
+
+library(MASS)
+
+# Step-wise AIC in both directions to choose best model measured by AIC
+step <- stepAIC(credit_risk_model, direction="both")
+step$anova
+
+AIC_credit_risk_model <- glm(train_data$Loan_Status ~., family=binomial(link='logit'),
+                             data = dplyr::select(train_data, - Dummy_Semiurban, - Dummy_Gender,
+                                                  - Dummy_Self_employed , - Dummy_Dep, - ApplicantIncome,
+                                                  - Loan_Amount_Term, - LoanAmount, - Dummy_Education, -CoapplicantIncome) )
+
+# All parameters are significant
+summary(AIC_credit_risk_model)
+
+library(dplyr)
+
+# Checking that custom GLM code works
+y_vals <- train_data$Loan_Status
+x <- as.data.frame(dplyr::select(train_data, -Loan_Status, - Dummy_Semiurban, - Dummy_Gender,
+                                 - Dummy_Self_employed , - Dummy_Dep, - ApplicantIncome,
+                                 - Loan_Amount_Term, - LoanAmount, - Dummy_Education, -CoapplicantIncome))
+X <- model.matrix(y_vals~. ,data = x)
+
+# Intial value for beta.
+beta <- as.numeric(rep(0.01, dim(X)[2]))
+
+# Performing Fishers scoring algorithm.
+# my_vals denotes MLE for model parameters.
+my_vals <- algorithm(X,y_vals,1000,beta)
+
+# Values seem reasonably close i.e. code works well!
+# Output: 6.921463e-12
+sum(abs(my_vals - coefficients(AIC_credit_risk_model)))
+
+# iv. CREATING 3 SHARES OF ORIGNAL DATA.
+
+# 3 parties have shares of the orignal data.
+X_1 <- X[1:205,]
+X_2 <- X[206:410,]
+X_3<- X[411:614,]
+
+y_1 <- y_vals[1:205]
+y_2 <- y_vals[206:410]
+y_3 <- y_vals[411:614]
+
+F_1 <- Observed_matrix(beta,X_1,y_1)
+F_2 <- Observed_matrix(beta,X_2,y_2)
+F_3 <- Observed_matrix(beta,X_3,y_3)
+
+F_4 <- score(beta,X_1,y_1)
+F_5 <- score(beta,X_2,y_2)
+F_6 <- score(beta,X_3,y_3)
+
+# Sum of each party's observed info and score function.
+Observed_Info_sum <- F_1 + F_2 + F_3
+Score_sum <- F_4 + F_5 + F_6
+
+# Fisher info and Score function of aggregate information.
+Observed_Info_full <- Observed_matrix(beta,X,y_vals)
+score_full <- score(beta,X,y_vals)
+
+# Indication of linearity of derivatives.
+# i.e. sum of individual scores is score of aggregate data.
+# same for Observed information.
+sum (Observed_Info_sum - Observed_Info_full)
+sum(Score_sum - score_full )
+
+# Creating a list of X and Y values for parties.
+X_list <- list(X_1,X_2,X_3)
+y_list <- list(y_1,y_2,y_3)
+
+# V. FINAL OUTPUT
+
+# Performing secure parameter estimation 
+# Cap of 100 Fishers scoring iterations.
+# 'my_output' = MLEs using secure parameter estimation. 
+my_output <- Secure_Logistic_IRLS(X_list,y_list,100,beta)
+
+# Difference is negligible.
+sum(abs(my_output$MLE - coefficients(AIC_credit_risk_model)))
+# Output: 0.0002794168
+
+# Therefore, the code for secure parameter esimation 
+# does provide sensible results.
+
+# plot(AIC_credit_risk_model)
+
+
+# Comparing 3rd  party model with model suggested by our framework
+coefs <- matrix(0, nrow = 2, ncol = 5)
+colnames(coefs) <- c("Intercept","Credit History","Married?","Urban?","Rural?")
+rownames(coefs) <- c("3rd party model","Proposed model")
+coefs[1,] <- coefficients(AIC_credit_risk_model)
+coefs[2,] <- my_output$MLE
+
+# Minimal differences between HSS derived model and 3rd party model
+View(coefs)
+
+# View(X)
+
+party_data <- dplyr::select(train_data, -Loan_Status, - Dummy_Semiurban, - Dummy_Gender,
+                            - Dummy_Self_employed , - Dummy_Dep, - ApplicantIncome,
+                            - Loan_Amount_Term, - LoanAmount, - Dummy_Education, -CoapplicantIncome)
+
+# Fitting individual credit risk models for completeness.
+# Propreitary data held by each financial institution.  
+party_data_1 <- party_data[1:205,]
+party_data_2 <- party_data[206:410,]
+party_data_3 <- party_data[411:614,]
+
+fi_1_model <- glm(y_1 ~., family=binomial(link='logit'),
+                  data = party_data_1)
+summary(fi_1_model)
+round(coefficients(fi_1_model),4)
+
+fi_2_model <- glm(y_2 ~., family=binomial(link='logit'),
+                  data = party_data_2)
+summary(fi_2_model)
+round(coefficients(fi_2_model),4)
+
+fi_3_model <- glm(y_3 ~., family=binomial(link='logit'),
+                  data = party_data_3)
+summary(fi_3_model)
+round(coefficients(fi_3_model),4)
+
+
+# Model coefficients are not signficantly different by visual inspection.
+round(coefficients(AIC_credit_risk_model),4)
+round(my_output$MLE,4)
+
+# Minimal difference between HSS-derived model and 3rd party model.
+# Therefore, our framework works well!
+
+#================================================================================================================
+
+#================================================================================================================
